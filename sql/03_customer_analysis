@@ -1,0 +1,78 @@
+USE electronics_retail;
+
+--Key Metrics
+SELECT
+ COUNT(DISTINCT f.customer_id) as total_customers,
+ COUNT(*) as total_orders,
+ ROUND(COUNT(*)/COUNT(DISTINCT f.customer_id),2) as avg_order_per_customer, 
+ ROUND(SUM(f.total_amount) / COUNT(DISTINCT f.customer_id),2) AS avg_revenue_per_customer
+FROM fact_sales AS f
+JOIN dim_customer AS c
+    ON f.customer_id = c.customer_id
+JOIN dim_order AS o
+    ON f.order_id = o.order_id
+WHERE o.order_status NOT IN ('Cancelled', 'Returned');
+
+--Identifying Top Customers:
+ SELECT
+    f.customer_id,
+    COUNT(*) AS valid_orders,
+    ROUND(SUM(f.total_amount), 2) AS valid_revenue,
+    ROUND(AVG(f.total_amount), 2) AS avg_order_value
+FROM fact_sales AS f
+JOIN dim_order AS o
+    ON f.order_id = o.order_id
+WHERE o.order_status NOT IN ('Cancelled', 'Returned')
+GROUP BY
+    f.customer_id
+ORDER BY
+    valid_revenue DESC;
+
+--Customer Segmentation Based on Values
+WITH customer_summary AS (
+    SELECT
+        f.customer_id,
+        COUNT(*) AS valid_orders,
+        SUM(f.total_amount) AS valid_revenue,
+        AVG(f.total_amount) AS avg_order_value
+    FROM fact_sales AS f
+    JOIN dim_order AS o
+        ON f.order_id = o.order_id
+    WHERE o.order_status NOT IN ('Cancelled', 'Returned')
+    GROUP BY
+        f.customer_id
+),
+ranked_customers AS (
+    SELECT
+        customer_id,
+        valid_orders,
+        valid_revenue,
+        avg_order_value,
+        NTILE(5) OVER (
+            ORDER BY valid_revenue DESC
+        ) AS revenue_quintile
+    FROM customer_summary
+)
+SELECT
+    CASE
+        WHEN revenue_quintile = 1 THEN 'High Value'
+        WHEN revenue_quintile IN (2, 3, 4) THEN 'Mid Value'
+        ELSE 'Low Value'
+    END AS customer_segment,
+    COUNT(*) AS customer_count,
+    ROUND(SUM(valid_revenue), 2) AS segment_revenue,
+    ROUND(AVG(valid_revenue), 2) AS avg_revenue_per_customer,
+    ROUND(AVG(valid_orders), 2) AS avg_orders_per_customer
+FROM ranked_customers
+GROUP BY
+    CASE
+        WHEN revenue_quintile = 1 THEN 'High Value'
+        WHEN revenue_quintile IN (2, 3, 4) THEN 'Mid Value'
+        ELSE 'Low Value'
+    END
+ORDER BY
+    CASE customer_segment
+        WHEN 'High Value' THEN 1
+        WHEN 'Mid Value' THEN 2
+        WHEN 'Low Value' THEN 3
+    END;
